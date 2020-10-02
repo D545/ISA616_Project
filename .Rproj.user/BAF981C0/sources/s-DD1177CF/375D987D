@@ -1,0 +1,25 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1600888027269.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "0",
+    "id" : "375D987D",
+    "lastKnownWriteTime" : 1600888041,
+    "last_content_update" : 1600888041487,
+    "path" : "C:/Users/DPDav/OneDrive/Desktop/Documents/Current Classes/ISA 616/ISA616_Project/Housing Script.R",
+    "project_path" : "Housing Script.R",
+    "properties" : {
+        "cursorPosition" : "7,8",
+        "scrollLine" : "0"
+    },
+    "read_only" : false,
+    "read_only_alternatives" : [
+    ],
+    "relative_order" : 2,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}
