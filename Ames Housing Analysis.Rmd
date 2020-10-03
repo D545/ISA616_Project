@@ -1,39 +1,323 @@
 ---
-title: "Ames Housing Analysis"
-author:
-  - Darek Davis
-date: "'r format(Sys.Date(), '%B %d, %Y')'"
-output: 
+title: "Predicting Home Selling Price in Ames, Iowa"
+author: "Darek Davis"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
   html_document:
     code_folding: show
     df_print: paged
     number_sections: yes
-    them: cerulean
-    toc: yes 
+    theme: cerulean
+    toc: yes
     toc_float: yes
+  pdf_document:
+    toc: yes
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, cache=TRUE)
-knitr::opts_chunk$set(fig.width = 8, fig.height = 6)
+knitr::opts_chunk$set(echo = TRUE,
+                      cache=TRUE,
+                      out.width="100%",
+                      warning=FALSE,
+                      message=FALSE,
+                      clean_cache=TRUE)
 ```
 
-## R Markdown
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+## Overview
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+In this analysis I attempt to build a stepwise regression model capable of predicting the selling price of a given home in Ames, Iowa based on house characteristics to aid local realtors. This was accomplished by using data obtained from the Ames Assessor's Office, which has traditionally been used for tax purposes. The raw data was preprocessed to collapse unnecessary levels, eliminate NA values, and create indicators for specific house elements such as the existence of a pool. 
 
-```{r cars}
-summary(cars)
+Furthermore, location is analyzed to determine what impact it has on predicting house selling price and the distribution of average house selling price by neighborhood is shown. 
+
+## Load Packages & Data
+
+```{r load}
+rm(list = ls()) # clear global environment
+graphics.off() # close all graphics
+if(require(pacman)==FALSE) install.packages("pacman")
+pacman::p_load(DataExplorer,fpp2,ggplot2,scales,dplyr,pROC,jtools,forcats)
+
+options(scipen=999)
+df<-read.csv("AmesHousing.csv")
 ```
 
-## Including Plots
+## Data Description
 
-You can also embed plots, for example:
+There are 2,930 observations in this data set with 82 variables. An in depth data description is contained within the project in the AmesHousingDataDescription.docx file. Out of 240,260 values, 13,960 are missing (~5.81%). The variables that account for the most missing values are seen below, in purple. 
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+
+```{r missing1}
+plot_missing(df)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+Below is a brief glimpse at the data. You can see the first and last 6 rows of data.
+
+```{r glimpse}
+head(df)
+tail(df)
+```
+
+## Data Preprocessing
+
+#### Feature Generation
+- The original pool variables of Pool.QC and Pool.Area were removed from the data since the majority of the values were missing. These variables were instead transformed into an indicator on whether or not the house has a pool. 
+- The Misc.Feature variable was also transformed into an indicator of whether the house has a shed, since 96.38% of the values were missing and shed was the most often seen Misc.Feature.
+
+
+#### Cleaning Variables
+- Alley was recoded to signify whether or not the house had an alley since 93.24% of the data was missing. 
+- Fence was recoded to signify whether or not the house had an fence since 80.48% of the data was missing.
+- Due to high degree of missing values in Fireplace.Qu (48.53%) and similar information stored in Fireplaces value, this column is dropped.
+- PID is dropped since it is not useful for prediction.
+- All character variables are transformed into factors.
+
+#### Imputing Values
+- Lot area has no NA values and no 0 values. Since lot frontage is the width of a lot, this value also cannot be 0 or NA. As a result, the median value is imputed for the NA values present, which likely represent a data collection error.
+- Garage.Cond,Garage.Finish,Garage.Qual, and Garage.Type all have empty spaces and NA values transformed into "NoGarage" level
+- Garage.Area and Garage.Cars have NA values transformed into 0s. 
+- Garage.Yr.Blt has NA values imputed with the median and the max value of 2207 is transformed into 2007 since that was the date used in the remodel and selling year for that row and 2207 is not possible. 
+- Bsmt.Cond,Bsmt.Qual,Bsmt.Exposure,BsmtFin.Type.1, and BsmtFin.Type.2 have empty spaces and NA values transformed into "NoBsmt" level. 
+- Bsmt.Full.Bath,Half.Bath,Bsmt.Unf.SF,Total.Bsmt.SF,BsmtFin.SF.1,BsmtFin.SF.2, and Mas.Vnr.Area have NA values transformed into 0s.
+
+
+
+
+```{r preprocessing}
+#pool
+df$Pool.QC<-as.factor(df$Pool.QC)
+df$pool<-!is.na(df$Pool.QC)
+df$pool<-as.factor(df$pool)
+
+
+#misc feature
+df$Misc.Feature<-as.factor(df$Misc.Feature)
+df$shed<-recode_factor(df$Misc.Feature,
+       "Elev"="No","Gar2"="No", "Othr"="No","TenC"="No", "Shed"="Yes")
+df$shed[is.na(df$shed)]<-"No"
+
+#alley 
+df$Alley[is.na(df$Alley)]<-"No"
+df$Alley<-as.factor(df$Alley)
+df$Alley<-recode_factor(df$Alley,
+                       "Grvl"="Yes","Pave"="Yes")
+
+#fence
+df$Fence[is.na(df$Fence)]<-"No"
+df$Fence<-as.factor(df$Fence)
+df$Fence<-recode_factor(df$Fence,
+                       "GdPrv"="Yes","GdWo"="Yes", "MnPrv"="Yes","MnWw"="Yes")
+
+
+
+#fireplace
+df$Fireplace.Qu<-as.factor(df$Fireplace.Qu)
+
+
+#lot
+df$M_LotFrontage<-as.factor(ifelse(is.na(df$Lot.Frontage),1,0))
+df$Lot.Frontage[is.na(df$Lot.Frontage)]<-median(df$Lot.Frontage, na.rm=TRUE)
+
+#Garages
+df$Garage.Area<-ifelse(is.na(df$Garage.Area),0, df$Garage.Area)
+df$Garage.Cars<-ifelse(is.na(df$Garage.Cars),0, df$Garage.Cars)
+
+df$Garage.Cond[df$Garage.Cond==""]<-NA
+df$Garage.Cond[is.na(df$Garage.Cond)]<-"NoGarage"
+df$Garage.Cond<-as.factor(df$Garage.Cond)
+
+df$Garage.Finish[df$Garage.Finish==""]<-NA
+df$Garage.Finish[is.na(df$Garage.Finish)]<-"NoGarage"
+df$Garage.Finish<-as.factor(df$Garage.Finish)
+
+df$Garage.Qual[df$Garage.Qual==""]<-NA
+df$Garage.Qual[is.na(df$Garage.Qual)]<-"NoGarage"
+df$Garage.Qual<-as.factor(df$Garage.Qual)
+
+df$Garage.Type[df$Garage.Type==""]<-NA
+df$Garage.Type[is.na(df$Garage.Type)]<-"NoGarage"
+df$Garage.Type<-as.factor(df$Garage.Type)
+
+
+df$Garage<-as.factor(ifelse(is.na(df$Garage.Yr.Blt),"No","Yes"))
+df$Garage.Yr.Blt[is.na(df$Garage.Yr.Blt)]<-median(df$Garage.Yr.Blt, na.rm = TRUE)
+df$Garage.Yr.Blt[df$Garage.Yr.Blt == 2207] <- 2007
+
+
+
+#Basement
+df$Bsmt.Cond[df$Bsmt.Cond==""]<-NA
+df$Bsmt.Cond[is.na(df$Bsmt.Cond)]<-"NoBsmt"
+df$Bsmt.Cond<-as.factor(df$Bsmt.Cond)
+
+df$Bsmt.Qual[df$Bsmt.Qual==""]<-NA
+df$Bsmt.Qual[is.na(df$Bsmt.Qual)]<-"NoBsmt"
+df$Bsmt.Qual<-as.factor(df$Bsmt.Qual)
+
+df$Bsmt.Exposure[df$Bsmt.Exposure==""]<-NA
+df$Bsmt.Exposure[is.na(df$Bsmt.Exposure)]<-"NoBsmt"
+df$Bsmt.Exposure<-as.factor(df$Bsmt.Exposure)
+
+df$BsmtFin.Type.1[df$BsmtFin.Type.1==""]<-NA
+df$BsmtFin.Type.1[is.na(df$BsmtFin.Type.1)]<-"NoBsmt"
+df$BsmtFin.Type.1<-as.factor(df$BsmtFin.Type.1)
+
+df$BsmtFin.Type.2[df$BsmtFin.Type.2==""]<-NA
+df$BsmtFin.Type.2[is.na(df$BsmtFin.Type.2)]<-"NoBsmt"
+df$BsmtFin.Type.2<-as.factor(df$BsmtFin.Type.2)
+
+df$Bsmt.Full.Bath<-ifelse(is.na(df$Bsmt.Full.Bath),0, df$Bsmt.Full.Bath)
+df$Bsmt.Half.Bath<-ifelse(is.na(df$Bsmt.Half.Bath),0, df$Bsmt.Half.Bath)
+
+df$Bsmt.Unf.SF<-ifelse(is.na(df$Bsmt.Unf.SF),0, df$Bsmt.Unf.SF)
+
+df$Total.Bsmt.SF<-ifelse(is.na(df$Total.Bsmt.SF),0, df$Total.Bsmt.SF)
+
+df$BsmtFin.SF.1<-ifelse(is.na(df$BsmtFin.SF.1),0, df$BsmtFin.SF.1)
+df$BsmtFin.SF.2<-ifelse(is.na(df$BsmtFin.SF.2),0, df$BsmtFin.SF.2)
+
+
+#other
+df$Mas.Vnr.Area<-ifelse(is.na(df$Mas.Vnr.Area),0, df$Mas.Vnr.Area)
+
+
+#Var removal
+df.clean<-select(df, -Pool.QC, -Pool.Area, -Misc.Feature,-Fireplace.Qu, -PID)
+
+df.clean[sapply(df.clean, is.character)] <- lapply(df.clean[sapply(df.clean, is.character)], 
+                                       as.factor)
+```
+
+
+#### Review missingness now
+
+After cleaning, all missing values have been removed or transformed. 
+
+```{r missing2}
+plot_missing(df.clean)
+```
+
+
+## Visualizations
+
+In order to examine if location has influences home price, we first need to understand more about the distribution of location in the data. Below are graphs showing the average home sale price by neighborhood and the number of homes sold by neighborhood. 
+
+```{r viz1}
+df.clean %>%
+  ggplot(aes(SalePrice, fct_reorder(Neighborhood,SalePrice))) +
+  stat_summary(fun = "mean", geom="point") +
+  theme(text = element_text(6),
+        axis.text.y = element_text(6)) +
+  scale_y_discrete(name=element_blank()) +
+  scale_x_continuous(name="Average Price")+
+  labs(title="Average Price by Neighborhood",
+       caption="Data source: Ames, Iowa Assessor's Office") +
+  theme_bw() +
+  theme(axis.text.y=element_text(size=9))
+```
+
+
+
+
+```{r viz2}
+df.clean %>%
+  group_by(Neighborhood) %>%
+  summarise(cnt = n()) %>%
+  ggplot(aes(cnt,fct_reorder(Neighborhood,cnt))) +
+  geom_bar(stat = "identity") +
+  theme(axis.text.x=element_text(angle = -90, hjust = 0))+ 
+  scale_y_discrete(name=element_blank()) +
+  scale_x_continuous(name="Number of Homes")+
+  labs(title="Number of Houses Sold by Neighborhood",
+       caption="Data source: Ames, Iowa Assessor's Office") 
+```
+
+## Model Creation
+
+Stepwise regression was chosen instead of best subsets to complete this analysis since it is more compuational feasible given the quantity of variables present in the data. Two regressions were created, the first with neighborhood as a variable used for prediction and one without neighborhood. This was done in an effort to determine what impact neighborhood, and by extension location, had on home selling price. 
+
+```{r creation, results="hide"}
+set.seed(101)
+
+#Stepwise model with neighborhood
+full.1<-lm(SalePrice~., data=df.clean, family="binomial")
+null.1<-lm(SalePrice~1, data=df.clean, family="binomial")
+step.1<-step(null.1, list(lower=formula(null.1), upper=formula(full.1)), data=df.clean, direction="both", trace=0)
+#adjusted Rsquared = 0.9175, significant p-value
+
+
+#without location, compare to see the impact
+df.noLocation<-select(df.clean, -Neighborhood)
+full.2<-lm(SalePrice~., data=df.noLocation, family="binomial")
+null.2<-lm(SalePrice~1, data=df.noLocation, family="binomial")
+step.2<-step(null.2, list(lower=formula(null.2), upper=formula(full.2)), data=df.noLocation, direction="both", trace=0)
+#adjusted Rsquared = 0.9061, signifcant p-value
+```
+
+## Model Comparison
+
+As you can see below, both models do well at predicting SalePrice with adjusted R squared values of 0.92 and 0.91 respectively. This means that only about 1% of the unique sample variation in SalePrice can be explained by neighborhood for this given area. 
+
+However, for the first model, we can conclude that about 92% of the sample variation in SalePrice can be explained when using the variables listed below. 
+
+#### Model 1
+```{r model1}
+summ(step.1)
+```
+
+#### Model 2
+```{r model2}
+summ(step.2)
+```
+
+
+## Model 1 Residual Analysis
+##### Residuals vs Fitted
+```{r res1}
+plot(step.1, which=c(1))
+
+```
+
+While there does appear to be a slight pattern here, it does not appear that constant variance is serious issue for this model.
+
+#### Normal Q-Q Plot
+```{r res2}
+plot(step.1, which=c(2))
+
+```
+Data appears to be roughly normally distributed. 
+
+#### Residuals vs Leverage
+```{r res3}
+plot(step.1, which=c(5))
+
+```
+Observations 2181 and 2182 are influential points and should be removed before creating the final model. 
+
+
+## Model Revision
+
+Final stepwise model is built after removing outliers, which improves overall predictive ability by raising the adjusted R squared value to 0.94, meaning that about 94% of the variation present in SalePrice is explained by this final model. 
+```{r revision, results="hide"}
+remove<-c(2181,2182)
+df.final<-df.clean[-remove,]
+
+
+#Final stepwise model
+full.3<-lm(SalePrice~., data=df.final, family="binomial")
+null.3<-lm(SalePrice~1, data=df.final, family="binomial")
+step.3<-step(null.3, list(lower=formula(null.3), upper=formula(full.3)), data=df.final, direction="both", trace=0)
+```
+
+
+```{r final}
+summ(step.3)
+```
+
+
+## Conclusions
+
+The final stepwise model created will be able to predict future house prices after inputting the same house characteristics. This will allow for realtors in Ames, Iowa to provide a reasonable price point when buying homes or consulting with families who own a home on what their house is worth. In addition, by using this model realtors can see which factors influence home prices in this area, which can be used for consultations regarding home value improvement projects or internal company projects to increase the value of their assets. This model will also allow the company to streamline their pricing process, which will likely increase customer satisfaction and potentially attract new customers to their company. 
+
+While there are clear differences in average home price for different neighborhoods, neighborhood when used as a predictor for SalePrice only marginally increases the models ability to explain the sample variation in SalePrice. As a result, realtors in this area should focus on the actual characteristics of a given house before considering location when attempting to discover undervalued real estate in the area. 
+
