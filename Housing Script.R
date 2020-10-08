@@ -155,8 +155,8 @@ df$Mas.Vnr.Area<-ifelse(is.na(df$Mas.Vnr.Area),0, df$Mas.Vnr.Area)
 
 #condense location into larger groups in order to validate model
 summary(df$Neighborhood)
-df$Neighborhood<-recode_factor(df$Neighborhood,
-                        "GrnHill"="Other","Landmrk"="Other", "Greens"="Other")
+#df$Neighborhood<-recode_factor(df$Neighborhood,"GrnHill"="Other","Landmrk"="Other", "Greens"="Other")
+
 
 
 #Var removal----move this below the cleaning section
@@ -171,6 +171,12 @@ df.clean[sapply(df.clean, is.character)] <- lapply(df.clean[sapply(df.clean, is.
                                        as.factor)
 str(df.clean)
 summary(df.clean)
+
+#doesn't make sense to use, way to many variables
+library(DataExplorer)
+plot_correlation(df)
+
+
 
 
 #Notes:
@@ -227,7 +233,6 @@ null.1<-lm(SalePrice~1, data=df.clean, family="binomial")
 step.1<-step(null.1, list(lower=formula(null.1), upper=formula(full.1)), data=df.clean, direction="both", trace=0)
 #adjusted Rsquared = 0.9175, significant p-value
 
-
 #without location, compare to see the impact
 df.noLocation<-select(df.clean, -Neighborhood)
 full.2<-lm(SalePrice~., data=df.noLocation, family="binomial")
@@ -241,7 +246,7 @@ install.packages("jtools")
 library(jtools)
 summ(step.1)
 summ(step.2)
-
+summary(step.1)
 
 plot(step.1, which=c(1))
 #while there does appear to be a slight pattern here, it does not appear that constant variance is serious issue for this model
